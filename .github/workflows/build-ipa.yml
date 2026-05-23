@@ -28,10 +28,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "::error::GEMINI_API_KEY repo secret is missing"
-            exit 1
-          fi
+          if [ -z "$GEMINI_API_KEY" ]; then echo "::error::GEMINI_API_KEY missing"; exit 1; fi
           cp Secrets.swift.example Secrets.swift
           python3 -c "
           import os
@@ -39,15 +36,12 @@ jobs:
           with open(path) as f: content = f.read()
           content = content.replace('YOUR_GEMINI_API_KEY', os.environ['GEMINI_API_KEY'])
           with open(path, 'w') as f: f.write(content)
-          print('Secrets.swift created')
+          print('ok')
           "
 
       - name: Resolve Swift Package dependencies
         working-directory: samples/CameraAccess
-        run: |
-          xcodebuild -resolvePackageDependencies \
-            -project CameraAccess.xcodeproj \
-            -scheme CameraAccess
+        run: xcodebuild -resolvePackageDependencies -project CameraAccess.xcodeproj -scheme CameraAccess
 
       - name: Build (unsigned, for device)
         working-directory: samples/CameraAccess
@@ -63,16 +57,23 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
 
-      - name: Package .app into .ipa (AltStore-vänlig)
+      - name: Package .app into .ipa (alla plists → XML + ditto)
         working-directory: samples/CameraAccess
         run: |
           mkdir -p Payload
           cp -R ./build/Build/Products/Release-iphoneos/CameraAccess.app Payload/
-          # Konvertera Info.plist från binär till XML (AltStore-kompatibilitet)
-          plutil -convert xml1 Payload/CameraAccess.app/Info.plist
-          # Verifiera att den nu är XML
-          file Payload/CameraAccess.app/Info.plist
-          # Använd ditto istället för zip (bevarar Apples metadata korrekt)
+          # Konvertera ALLA plist-filer (även framework-Info.plists) till XML för AltStore
+          echo "=== Plist-filer före konvertering ==="
+          find Payload -name "*.plist" -type f | while read f; do
+            HEAD=$(head -c 8 "$f" | xxd -p)
+            if [[ "$HEAD" == 6270* ]]; then echo "  BIN  $f"; else echo "  XML  $f"; fi
+          done
+          find Payload -name "*.plist" -type f -exec plutil -convert xml1 {} \;
+          echo "=== Efter konvertering ==="
+          find Payload -name "*.plist" -type f | while read f; do
+            HEAD=$(head -c 8 "$f" | xxd -p)
+            if [[ "$HEAD" == 6270* ]]; then echo "  BIN  $f  (FAIL)"; else echo "  XML  $f"; fi
+          done
           ditto -c -k --keepParent Payload ../../CameraAccess-unsigned.ipa
           rm -rf Payload
           ls -la ../../CameraAccess-unsigned.ipa
