@@ -29,18 +29,17 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           if [ -z "$GEMINI_API_KEY" ]; then
-            echo "::error::GEMINI_API_KEY repo secret is missing. Add it at:"
-            echo "::error::https://github.com/${{ github.repository }}/settings/secrets/actions"
+            echo "::error::GEMINI_API_KEY repo secret is missing"
             exit 1
           fi
           cp Secrets.swift.example Secrets.swift
           python3 -c "
-          import os, sys
+          import os
           path = 'Secrets.swift'
           with open(path) as f: content = f.read()
           content = content.replace('YOUR_GEMINI_API_KEY', os.environ['GEMINI_API_KEY'])
           with open(path, 'w') as f: f.write(content)
-          print('Secrets.swift created (gemini key injected; openclaw/webrtc remain placeholders)')
+          print('Secrets.swift created')
           "
 
       - name: Resolve Swift Package dependencies
@@ -64,13 +63,19 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
 
-      - name: Package .app into .ipa
+      - name: Package .app into .ipa (AltStore-vänlig)
         working-directory: samples/CameraAccess
         run: |
           mkdir -p Payload
           cp -R ./build/Build/Products/Release-iphoneos/CameraAccess.app Payload/
-          zip -r ../../CameraAccess-unsigned.ipa Payload
+          # Konvertera Info.plist från binär till XML (AltStore-kompatibilitet)
+          plutil -convert xml1 Payload/CameraAccess.app/Info.plist
+          # Verifiera att den nu är XML
+          file Payload/CameraAccess.app/Info.plist
+          # Använd ditto istället för zip (bevarar Apples metadata korrekt)
+          ditto -c -k --keepParent Payload ../../CameraAccess-unsigned.ipa
           rm -rf Payload
+          ls -la ../../CameraAccess-unsigned.ipa
 
       - name: Upload .ipa artifact
         uses: actions/upload-artifact@v4
