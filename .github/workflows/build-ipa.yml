@@ -1,0 +1,80 @@
+name: Build iOS .ipa (unsigned)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Print toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Create Secrets.swift from template
+        working-directory: samples/CameraAccess/CameraAccess
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY repo secret is missing. Add it at:"
+            echo "::error::https://github.com/${{ github.repository }}/settings/secrets/actions"
+            exit 1
+          fi
+          cp Secrets.swift.example Secrets.swift
+          python3 -c "
+          import os, sys
+          path = 'Secrets.swift'
+          with open(path) as f: content = f.read()
+          content = content.replace('YOUR_GEMINI_API_KEY', os.environ['GEMINI_API_KEY'])
+          with open(path, 'w') as f: f.write(content)
+          print('Secrets.swift created (gemini key injected; openclaw/webrtc remain placeholders)')
+          "
+
+      - name: Resolve Swift Package dependencies
+        working-directory: samples/CameraAccess
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project CameraAccess.xcodeproj \
+            -scheme CameraAccess
+
+      - name: Build (unsigned, for device)
+        working-directory: samples/CameraAccess
+        run: |
+          xcodebuild \
+            -project CameraAccess.xcodeproj \
+            -scheme CameraAccess \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath ./build \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package .app into .ipa
+        working-directory: samples/CameraAccess
+        run: |
+          mkdir -p Payload
+          cp -R ./build/Build/Products/Release-iphoneos/CameraAccess.app Payload/
+          zip -r ../../CameraAccess-unsigned.ipa Payload
+          rm -rf Payload
+
+      - name: Upload .ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionClaw-unsigned-ipa
+          path: CameraAccess-unsigned.ipa
+          retention-days: 30
